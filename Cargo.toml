@@ -14,6 +14,7 @@ env_logger = "0.10"
 hex = "0.4"
 hex-literal = "0.4"
 log = "0.4"
+miniscript = "11.0"
 rand = { version = "0.8", features = ["std_rng", "small_rng"] }
 reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

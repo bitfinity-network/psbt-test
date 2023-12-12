@@ -89,9 +89,9 @@ async fn main() -> anyhow::Result<()> {
 
     // input to use
     let tx_input = TxInput {
-        id: Txid::from_str("14a7109b642b4fca7f10cd9bee89db73770c5a2d107f6a51c6bd7625dcdc2aed")
+        id: Txid::from_str("a1524825ee06f5d41d0a51f6debf4c5bfd18c77210f84a3d78f51078d052150d")
             .unwrap(),
-        index: 0,
+        index: 1,
         amount: Amount::from_sat(8_000),
     };
 
@@ -142,7 +142,8 @@ async fn main() -> anyhow::Result<()> {
         &secp,
         unsigned_tx,
         &marketplace,
-        &[sender.clone(), recipient],
+        &sender,
+        &recipient,
         TxOut {
             value: tx_input.amount,
             script_pubkey: sender.address.script_pubkey(),

@@ -5,6 +5,7 @@ use bitcoin::{
     secp256k1::{All, Secp256k1},
     Psbt, ScriptBuf, Transaction, TxOut, Witness,
 };
+use miniscript::psbt::PsbtExt;
 
 use crate::Account;
 
@@ -12,7 +13,8 @@ pub fn sign_partially(
     secp: &Secp256k1<All>,
     unsigned_tx: Transaction,
     updater_account: &Account,
-    accounts: &[Account],
+    sender_account: &Account,
+    recipient_account: &Account,
     previous_output: TxOut,
 ) -> anyhow::Result<Transaction> {
     // Creator (https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/examples/ecdsa-psbt.rs)
@@ -24,15 +26,15 @@ pub fn sign_partially(
         ..Default::default()
     };
 
-    let pk = updater_account.input_xpub.to_pub();
+    let pk = sender_account.input_xpub.to_pub();
     let wpkh = pk.wpubkey_hash().expect("a compressed pubkey");
 
     let redeem_script = ScriptBuf::new_p2wpkh(&wpkh);
     input.redeem_script = Some(redeem_script);
 
-    let fingerprint = updater_account.private_key.fingerprint(secp);
     let mut map = BTreeMap::new();
-    map.insert(pk.inner, (fingerprint, updater_account.path.clone()));
+    let fingerprint = sender_account.private_key.fingerprint(secp);
+    map.insert(pk.inner, (fingerprint, sender_account.path.clone()));
     input.bip32_derivation = map;
 
     let ty = PsbtSighashType::from_str("SIGHASH_ALL")?;
@@ -42,12 +44,8 @@ pub fn sign_partially(
     debug!("unsigned psbt: {psbt:#?}");
 
     // sign
-    match psbt.sign(&updater_account.private_key, secp) {
-        Ok(keys) if keys.len() == 1 => {}
-        Ok(_) => anyhow::bail!("unexpected number of keys"),
-        Err(_) => anyhow::bail!("signing failed"),
-    }
-    for account in accounts {
+
+    for account in vec![sender_account, recipient_account, updater_account] {
         match psbt.sign(&account.private_key, secp) {
             Ok(keys) if keys.len() == 1 => {}
             Ok(_) => anyhow::bail!("unexpected number of keys"),
@@ -61,7 +59,7 @@ pub fn sign_partially(
     let sigs: Vec<_> = psbt.inputs[0].partial_sigs.values().collect();
     let mut script_witness = Witness::new();
     script_witness.push(&sigs[0].to_vec());
-    script_witness.push(updater_account.input_xpub.to_pub().to_bytes());
+    script_witness.push(sender_account.input_xpub.to_pub().to_bytes());
 
     // Clear all the data fields as per the spec.
     debug!("finalized psbt: {psbt:#?}");
