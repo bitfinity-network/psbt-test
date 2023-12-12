@@ -22,4 +22,4 @@ serde_with = { version = "3", default-features = false, features = ["macros"] }
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 
-ord-rs = { git = "ssh://git@github.com/bitfinity-network/ord-rs.git", branch = "EPROD-627-implement-p2tr-support" }
+ord-rs = { git = "ssh://git@github.com/bitfinity-network/ord-rs.git" }
