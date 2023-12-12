@@ -15,19 +15,13 @@ use bitcoin::bip32::ChildNumber;
 use bitcoin::bip32::DerivationPath;
 use bitcoin::bip32::Xpriv;
 use bitcoin::bip32::Xpub;
-use bitcoin::opcodes::all::{OP_CHECKSIG, OP_ENDIF, OP_IF};
-use bitcoin::opcodes::{OP_0, OP_FALSE};
-use bitcoin::script::Builder as ScriptBuilder;
 use bitcoin::transaction::Version;
 use bitcoin::{
     secp256k1::{All, Secp256k1},
     Address, Amount, PublicKey, Txid,
 };
 use bitcoin::{Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
-use ord_rs::Inscription as _;
 use ord_rs::{transaction::TxInput, OrdError};
-
-use crate::utils::bytes_to_push_bytes;
 
 /// tb1qzc8dhpkg5e4t6xyn4zmexxljc4nkje59dg3ark
 const SENDER_ADDRESS_MNEMONIC: &str =
@@ -100,11 +94,6 @@ async fn main() -> anyhow::Result<()> {
         index: 0,
         amount: Amount::from_sat(8_000),
     };
-    // inscription
-    let inscription = ord_rs::brc20::Brc20::deploy("omar", 8_888_000, Some(1_000), None);
-
-    // prepare commit
-    let (p2tr_keypair, p2tr_pubkey) = taproot::generate_keypair(&secp);
 
     // calc balance
     // exceeding amount of transaction to send to leftovers recipient
@@ -119,35 +108,11 @@ async fn main() -> anyhow::Result<()> {
 
     let reveal_balance = POSTAGE + REVEAL_FEE;
 
-    // prepare redeem script
-    let redeem_script = ScriptBuilder::new()
-        .push_slice(bytes_to_push_bytes(&p2tr_pubkey.serialize())?.as_push_bytes())
-        .push_opcode(OP_CHECKSIG)
-        .push_opcode(OP_FALSE)
-        .push_opcode(OP_IF)
-        .push_slice(b"ord")
-        .push_slice(b"\x01")
-        .push_slice(bytes_to_push_bytes(inscription.content_type().as_bytes())?.as_push_bytes())
-        .push_opcode(OP_0)
-        .push_slice(inscription.data()?.as_push_bytes())
-        .push_opcode(OP_ENDIF)
-        .into_script();
-
-    // make taproot payload
-    let taproot_payload = taproot::TaprootPayload::build(
-        &secp,
-        p2tr_keypair,
-        p2tr_pubkey,
-        &redeem_script,
-        reveal_balance,
-        Network::Testnet,
-    )?;
-
     // make txout
     let tx_out = vec![
         TxOut {
             value: Amount::from_sat(reveal_balance),
-            script_pubkey: taproot_payload.address.script_pubkey(),
+            script_pubkey: recipient.address.script_pubkey(),
         },
         TxOut {
             value: Amount::from_sat(leftover_amount),
@@ -182,18 +147,11 @@ async fn main() -> anyhow::Result<()> {
             value: tx_input.amount,
             script_pubkey: sender.address.script_pubkey(),
         },
-        &redeem_script,
     )?;
     debug!("partially_signed_tx: {partially_signed_tx:?}");
 
-    // sign
-    let sign_key = sender.private_key.to_priv();
-    let mut signer = signer::Signer::new(&sign_key, &secp, partially_signed_tx);
-    let signed_tx = signer.sign_commit_transaction(&[tx_input], &sender.address.script_pubkey())?;
-    debug!("signed_tx: {signed_tx:?}");
-
     // broadcast transaction
-    let txid = rpc_client::broadcast_transaction(&signed_tx, Network::Testnet).await?;
+    let txid = rpc_client::broadcast_transaction(&partially_signed_tx, Network::Testnet).await?;
     rpc_client::wait_for_tx(&txid, Network::Testnet).await?;
     println!("Commit tx: https://mempool.space/testnet/tx/{txid}");
 

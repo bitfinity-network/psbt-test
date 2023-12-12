@@ -14,7 +14,6 @@ pub fn sign_partially(
     updater_account: &Account,
     accounts: &[Account],
     previous_output: TxOut,
-    witness_script: &ScriptBuf,
 ) -> anyhow::Result<Transaction> {
     // Creator (https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/examples/ecdsa-psbt.rs)
     let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
@@ -62,7 +61,7 @@ pub fn sign_partially(
     let sigs: Vec<_> = psbt.inputs[0].partial_sigs.values().collect();
     let mut script_witness = Witness::new();
     script_witness.push(&sigs[0].to_vec());
-    script_witness.push(witness_script);
+    script_witness.push(updater_account.input_xpub.to_pub().to_bytes());
 
     // Clear all the data fields as per the spec.
     debug!("finalized psbt: {psbt:#?}");
