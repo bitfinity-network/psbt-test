@@ -1,11 +1,15 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, HashMap},
+    str::FromStr,
+};
 
 use bitcoin::{
-    psbt::{Input, PsbtSighashType},
-    secp256k1::{All, Secp256k1},
-    Psbt, ScriptBuf, Transaction, TxOut, Witness,
+    bip32::Fingerprint,
+    hashes::Hash,
+    psbt::{GetKey, Input, KeyRequest, PsbtSighashType},
+    secp256k1::{All, Context, Secp256k1},
+    PrivateKey, Psbt, Transaction, TxOut, Witness,
 };
-use miniscript::psbt::PsbtExt;
 
 use crate::Account;
 
@@ -14,7 +18,6 @@ pub fn sign_partially(
     unsigned_tx: Transaction,
     updater_account: &Account,
     sender_account: &Account,
-    recipient_account: &Account,
     previous_output: TxOut,
 ) -> anyhow::Result<Transaction> {
     // Creator (https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/examples/ecdsa-psbt.rs)
@@ -26,15 +29,18 @@ pub fn sign_partially(
         ..Default::default()
     };
 
-    let pk = sender_account.input_xpub.to_pub();
-    let wpkh = pk.wpubkey_hash().expect("a compressed pubkey");
-
-    let redeem_script = ScriptBuf::new_p2wpkh(&wpkh);
-    input.redeem_script = Some(redeem_script);
-
     let mut map = BTreeMap::new();
-    let fingerprint = sender_account.private_key.fingerprint(secp);
-    map.insert(pk.inner, (fingerprint, sender_account.path.clone()));
+    let fingerprint_bytes = updater_account
+        .public_key
+        .pubkey_hash()
+        .as_byte_array()
+        .to_vec();
+    let fingerprint: &[u8; 4] = fingerprint_bytes[..4].try_into().unwrap();
+    let fingerprint = Fingerprint::from(fingerprint);
+    map.insert(
+        updater_account.private_key.inner.public_key(secp),
+        (fingerprint, updater_account.path.clone()),
+    );
     input.bip32_derivation = map;
 
     let ty = PsbtSighashType::from_str("SIGHASH_ALL")?;
@@ -44,9 +50,9 @@ pub fn sign_partially(
     debug!("unsigned psbt: {psbt:#?}");
 
     // sign
-
-    for account in vec![sender_account, recipient_account, updater_account] {
-        match psbt.sign(&account.private_key, secp) {
+    for account in vec![sender_account] {
+        let key = KeyRetriever(account.private_key.clone());
+        match psbt.sign(&key, secp) {
             Ok(keys) if keys.len() == 1 => {}
             Ok(_) => anyhow::bail!("unexpected number of keys"),
             Err(_) => anyhow::bail!("signing failed"),
@@ -56,10 +62,11 @@ pub fn sign_partially(
     debug!("signed psbt: {psbt:#?}");
 
     // Push witness
-    let sigs: Vec<_> = psbt.inputs[0].partial_sigs.values().collect();
-    let mut script_witness = Witness::new();
-    script_witness.push(&sigs[0].to_vec());
-    script_witness.push(sender_account.input_xpub.to_pub().to_bytes());
+    let sigs: Vec<_> = psbt.inputs[0].partial_sigs.iter().collect();
+    let script_witness = Witness::p2wpkh(&sigs[0].1, &sigs[0].0.inner);
+
+    // FINALIZER
+    psbt.inputs[0].final_script_witness = Some(script_witness);
 
     // Clear all the data fields as per the spec.
     debug!("finalized psbt: {psbt:#?}");
@@ -69,7 +76,19 @@ pub fn sign_partially(
     psbt.inputs[0].witness_script = None;
     psbt.inputs[0].bip32_derivation = BTreeMap::new();
 
-    psbt.inputs[0].final_script_witness = Some(script_witness);
-
     Ok(psbt.extract_tx_fee_rate_limit()?)
+}
+
+pub struct KeyRetriever(PrivateKey);
+
+impl GetKey for KeyRetriever {
+    type Error = anyhow::Error;
+
+    fn get_key<C: Context>(
+        &self,
+        _fingerprint: KeyRequest,
+        _secp: &Secp256k1<C>,
+    ) -> Result<Option<PrivateKey>, Self::Error> {
+        Ok(Some(self.0.clone()))
+    }
 }

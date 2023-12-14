@@ -16,6 +16,7 @@ use bitcoin::bip32::DerivationPath;
 use bitcoin::bip32::Xpriv;
 use bitcoin::bip32::Xpub;
 use bitcoin::transaction::Version;
+use bitcoin::PrivateKey;
 use bitcoin::{
     secp256k1::{All, Secp256k1},
     Address, Amount, PublicKey, Txid,
@@ -24,50 +25,36 @@ use bitcoin::{Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, 
 use ord_rs::{transaction::TxInput, OrdError};
 
 /// tb1qzc8dhpkg5e4t6xyn4zmexxljc4nkje59dg3ark
-const SENDER_ADDRESS_MNEMONIC: &str =
-    "educate loyal echo sphere near family potato proud fresh still hub address";
-/// tb1qax89amll2uas5k92tmuc8rdccmqddqw94vrr86
-const RECIPIENT_ADDRESS_MNEMONIC: &str =
-    "yard arctic apart velvet virus flight lemon cable ozone pole course awake";
-/// tb1qcwflhw3252daxhj6d40wxpuard5c05lzqptdx7
-const MARKETPLACE_ADDRESS_MNEMONIC: &str =
-    "position goat expect abandon mesh response champion list praise broccoli orange pole";
+const SENDER_ADDRESS_WIF: &str = "cVkWbHmoCx6jS8AyPNQqvFr8V9r2qzDHJLaxGDQgDJfxT73w6fuU";
+/// tb1qdnsst69uf5gg0mfyp0ercw3k5gew9qc5m8xp96
+const RECIPIENT_ADDRESS_WIF: &str = "cVonwZaHFNWck31inrgNUEFdSE3rSagWKSZLaYqRvfhVELbQsBH7";
+/// tb1qpwhuavg7ht5mwsrkwfn2sgderlkwrp5eumtjc6
+const MARKETPLACE_ADDRESS_WIF: &str = "cMaoE2kaUQEp6BiAZ143UdH8LZycvF3nn17mR7Si9TssAczJ5d6V";
 
-const COMMIT_FEE: u64 = 2_500;
-const REVEAL_FEE: u64 = 4_700;
-const POSTAGE: u64 = 333;
+const AMOUNT: u64 = 1_000;
+const FEE: u64 = 3_000;
 
 #[derive(Debug, Clone)]
 pub struct Account {
     pub address: Address,
     pub public_key: PublicKey,
-    pub private_key: Xpriv,
-    pub input_xpub: Xpub,
+    pub private_key: PrivateKey,
     pub path: DerivationPath,
 }
 
 impl Account {
-    pub fn from_mnemonic(secp: &Secp256k1<All>, mnemonic: &str) -> anyhow::Result<Self> {
-        let mnemonic = Mnemonic::from_str(mnemonic)?;
-        let seed = mnemonic.to_seed("");
-        let root = Xpriv::new_master(Network::Testnet, &seed)?;
+    pub fn from_wif(secp: &Secp256k1<All>, wif: &str) -> anyhow::Result<Self> {
+        let private_key = PrivateKey::from_wif(wif)?;
+        let public_key = private_key.public_key(secp);
+        let address = Address::p2wpkh(&public_key, private_key.network)?;
 
         // derive child xpub
-        let path = DerivationPath::from_str("m/84h/0h/0h")?;
-        let child = root.derive_priv(&secp, &path)?;
-        let xpub = Xpub::from_priv(&secp, &child);
-
-        let zero = ChildNumber::from_normal_idx(0)?;
-        let public_key = xpub.derive_pub(&secp, &[zero, zero])?.public_key;
-
-        let public_key = PublicKey::new(public_key);
-        let address = Address::p2wpkh(&public_key, Network::Testnet)?;
+        let path = DerivationPath::from_str("m")?;
 
         Ok(Self {
             address,
             public_key,
-            private_key: root,
-            input_xpub: xpub,
+            private_key,
             path,
         })
     }
@@ -79,9 +66,9 @@ async fn main() -> anyhow::Result<()> {
 
     let secp = Secp256k1::new();
     // setup accounts
-    let sender = Account::from_mnemonic(&secp, SENDER_ADDRESS_MNEMONIC)?;
-    let recipient = Account::from_mnemonic(&secp, RECIPIENT_ADDRESS_MNEMONIC)?;
-    let marketplace = Account::from_mnemonic(&secp, MARKETPLACE_ADDRESS_MNEMONIC)?;
+    let sender = Account::from_wif(&secp, SENDER_ADDRESS_WIF)?;
+    let recipient = Account::from_wif(&secp, RECIPIENT_ADDRESS_WIF)?;
+    let marketplace = Account::from_wif(&secp, MARKETPLACE_ADDRESS_WIF)?;
 
     debug!("sender: {}", sender.address);
     debug!("recipient: {}", recipient.address);
@@ -89,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
 
     // input to use
     let tx_input = TxInput {
-        id: Txid::from_str("a1524825ee06f5d41d0a51f6debf4c5bfd18c77210f84a3d78f51078d052150d")
+        id: Txid::from_str("679b42bcb193e7b85ed5b2378aaa2d0cb1b9c600d1c22475598d8bafa171f8d9")
             .unwrap(),
         index: 1,
         amount: Amount::from_sat(8_000),
@@ -100,18 +87,15 @@ async fn main() -> anyhow::Result<()> {
     let leftover_amount = tx_input
         .amount
         .to_sat()
-        .checked_sub(POSTAGE)
-        .and_then(|v| v.checked_sub(COMMIT_FEE))
-        .and_then(|v| v.checked_sub(REVEAL_FEE))
+        .checked_sub(AMOUNT)
+        .and_then(|v| v.checked_sub(FEE))
         .ok_or(OrdError::InsufficientBalance)?;
     debug!("leftover_amount: {leftover_amount}");
-
-    let reveal_balance = POSTAGE + REVEAL_FEE;
 
     // make txout
     let tx_out = vec![
         TxOut {
-            value: Amount::from_sat(reveal_balance),
+            value: Amount::from_sat(AMOUNT),
             script_pubkey: recipient.address.script_pubkey(),
         },
         TxOut {
@@ -138,12 +122,12 @@ async fn main() -> anyhow::Result<()> {
         input: tx_in,
         output: tx_out,
     };
+    // https://github.com/bitcoin/bitcoin/blob/master/doc/psbt.md
     let partially_signed_tx = psbt::sign_partially(
         &secp,
         unsigned_tx,
         &marketplace,
         &sender,
-        &recipient,
         TxOut {
             value: tx_input.amount,
             script_pubkey: sender.address.script_pubkey(),

@@ -602,17 +602,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
-name = "miniscript"
-version = "11.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86a23dd3ad145a980e231185d114399f25a0a307d2cd918010ddda6334323df9"
-dependencies = [
- "bech32",
- "bitcoin",
- "bitcoin-internals",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -808,7 +797,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "log",
- "miniscript",
  "ord-rs",
  "rand",
  "reqwest",
